@@ -74,14 +74,18 @@ module Postal
 
       string :smtp_relays do
         array
-        description "An array of SMTP relays in the format of smtp://host:port"
+        description "An array of SMTP relays in the format of smtp://user:pass@host:port?ssl_mode=STARTTLS&auth_type=plain&helo_hostname=mail.example.com"
         transform do |value|
           uri = URI.parse(value)
           query = uri.query ? CGI.parse(uri.query) : {}
           {
             host: uri.host,
             port: uri.port || 25,
-            ssl_mode: query["ssl_mode"]&.first || "Auto"
+            ssl_mode: query["ssl_mode"]&.first || "Auto",
+            auth_username: (uri.user ? URI.decode_www_form_component(uri.user) : nil) || query["username"]&.first,
+            auth_password: (uri.password ? URI.decode_www_form_component(uri.password) : nil) || query["password"]&.first,
+            auth_type: query["auth_type"]&.first || "plain",
+            helo_hostname: query["helo_hostname"]&.first
           }
         end
       end
@@ -107,6 +111,11 @@ module Postal
 
       boolean :batch_queued_messages do
         description "When enabled queued messages will be de-queued in batches based on their destination"
+        default true
+      end
+
+      boolean :campaigns_enabled do
+        description "Enable campaign management features"
         default true
       end
     end

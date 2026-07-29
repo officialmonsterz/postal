@@ -4,8 +4,22 @@ Rails.application.routes.draw do
   # Legacy API Routes
   match "/api/v1/send/message" => "legacy_api/send#message", via: [:get, :post, :patch, :put]
   match "/api/v1/send/raw" => "legacy_api/send#raw", via: [:get, :post, :patch, :put]
+  match "/api/v1/send/batch" => "legacy_api/send#batch", via: [:post]
   match "/api/v1/messages/message" => "legacy_api/messages#message", via: [:get, :post, :patch, :put]
   match "/api/v1/messages/deliveries" => "legacy_api/messages#deliveries", via: [:get, :post, :patch, :put]
+
+  # Campaign API Routes
+  match "/api/v1/campaigns" => "legacy_api/campaigns#index", via: [:get]
+  match "/api/v1/campaigns" => "legacy_api/campaigns#create", via: [:post]
+  match "/api/v1/campaigns/:id" => "legacy_api/campaigns#show", via: [:get]
+  match "/api/v1/campaigns/:id/launch" => "legacy_api/campaigns#launch", via: [:post]
+  match "/api/v1/campaigns/:id/pause" => "legacy_api/campaigns#pause", via: [:post]
+  match "/api/v1/campaigns/:id/stats" => "legacy_api/campaigns#stats", via: [:get]
+  match "/api/v1/campaigns/:id/recipients" => "legacy_api/campaigns#recipients", via: [:get]
+  match "/api/v1/campaigns/:id/recipients" => "legacy_api/campaigns#add_recipients", via: [:post]
+
+  # OpenAPI schema (unauthenticated)
+  get "api/v1/openapi.json" => "legacy_api/openapi#schema"
 
   scope "org/:org_permalink", as: "organization" do
     resources :domains, only: [:index, :new, :create, :destroy] do

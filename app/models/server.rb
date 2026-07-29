@@ -65,6 +65,7 @@ class Server < ApplicationRecord
   has_many :webhook_requests, dependent: :destroy
   has_many :track_domains, dependent: :destroy
   has_many :ip_pool_rules, dependent: :destroy, as: :owner
+  has_many :campaigns, dependent: :destroy
 
   random_string :token, type: :chars, length: 6, unique: true, upper_letters_only: true
   default_value :permalink, -> { name ? name.parameterize : nil }

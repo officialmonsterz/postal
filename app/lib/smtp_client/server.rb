@@ -6,11 +6,21 @@ module SMTPClient
     attr_reader :hostname
     attr_reader :port
     attr_accessor :ssl_mode
+    attr_accessor :auth_username
+    attr_accessor :auth_password
+    attr_accessor :auth_type
+    attr_accessor :helo_hostname
 
-    def initialize(hostname, port: 25, ssl_mode: SSLModes::AUTO)
+    def initialize(hostname, port: 25, ssl_mode: SSLModes::AUTO,
+                   auth_username: nil, auth_password: nil,
+                   auth_type: "plain", helo_hostname: nil)
       @hostname = hostname
       @port = port
       @ssl_mode = ssl_mode
+      @auth_username = auth_username
+      @auth_password = auth_password
+      @auth_type = auth_type.presence || "plain"
+      @helo_hostname = helo_hostname
     end
 
     # Return all IP addresses for this server by resolving its hostname.

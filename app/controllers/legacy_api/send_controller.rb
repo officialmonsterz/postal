@@ -12,51 +12,19 @@ module LegacyAPI
       "FromAddressMissing" => "The From address is missing and is required",
       "UnauthenticatedFromAddress" => "The From address is not authorised to send mail from this server",
       "AttachmentMissingName" => "An attachment is missing a name",
-      "AttachmentMissingData" => "An attachment is missing data"
+      "AttachmentMissingData" => "An attachment is missing data",
+      "SendLimitExceeded" => "This server has exceeded its hourly send limit",
+      "BatchLimitExceeded" => "The batch contains too many messages (maximum 500 per request)"
     }.freeze
+
+    before_action :enforce_send_limit, only: [:message, :raw, :batch]
 
     # Send a message with the given options
     #
     #   URL:            /api/v1/send/message
     #
-    #   Parameters:     to              => REQ: An array of emails addresses
-    #                   cc              => An array of email addresses to CC
-    #                   bcc             => An array of email addresses to BCC
-    #                   from            => The name/email to send the email from
-    #                   sender          => The name/email of the 'Sender'
-    #                   reply_to        => The name/email of the 'Reply-to'
-    #                   plain_body      => The plain body
-    #                   html_body       => The HTML body
-    #                   bounce          => Is this message a bounce?
-    #                   tag             => A custom tag to add to the message
-    #                   custom_headers  => A hash of custom headers
-    #                   attachments     => An array of attachments
-    #                                      (name, content_type and data (base64))
-    #
-    #   Response:       A array of hashes containing message information
-    #                   OR an error if there is an issue sending the message
-    #
     def message
-      attributes = {}
-      attributes[:to] = api_params["to"]
-      attributes[:cc] = api_params["cc"]
-      attributes[:bcc] = api_params["bcc"]
-      attributes[:from] = api_params["from"]
-      attributes[:sender] = api_params["sender"]
-      attributes[:subject] = api_params["subject"]
-      attributes[:reply_to] = api_params["reply_to"]
-      attributes[:plain_body] = api_params["plain_body"]
-      attributes[:html_body] = api_params["html_body"]
-      attributes[:bounce] = api_params["bounce"] ? true : false
-      attributes[:tag] = api_params["tag"]
-      attributes[:custom_headers] = api_params["headers"] if api_params["headers"]
-      attributes[:attachments] = []
-
-      (api_params["attachments"] || []).each do |attachment|
-        next unless attachment.is_a?(Hash)
-
-        attributes[:attachments] << { name: attachment["name"], content_type: attachment["content_type"], data: attachment["data"], base64: true }
-      end
+      attributes = build_message_attributes(api_params)
 
       message = OutgoingMessagePrototype.new(@current_credential.server, request.ip, "api", attributes)
       message.credential = @current_credential
@@ -71,14 +39,6 @@ module LegacyAPI
     # Send a message by providing a raw message
     #
     #   URL:            /api/v1/send/raw
-    #
-    #   Parameters:     rcpt_to         => REQ: An array of email addresses to send
-    #                                      the message to
-    #                   mail_from       => REQ: the address to send the email from
-    #                   data            => REQ: base64-encoded mail data
-    #
-    #   Response:       A array of hashes containing message information
-    #                   OR an error if there is an issue sending the message
     #
     def raw
       unless api_params["rcpt_to"].is_a?(Array)
@@ -112,23 +72,108 @@ module LegacyAPI
 
       # Store the result ready to return
       result = { message_id: nil, messages: {} }
-      if api_params["rcpt_to"].is_a?(Array)
-        api_params["rcpt_to"].uniq.each do |rcpt_to|
-          message = @current_credential.server.message_db.new_message
-          message.rcpt_to = rcpt_to
-          message.mail_from = api_params["mail_from"]
-          message.raw_message = raw_message
-          message.received_with_ssl = true
-          message.scope = "outgoing"
-          message.domain_id = authenticated_domain.id
-          message.credential_id = @current_credential.id
-          message.bounce = api_params["bounce"] ? true : false
-          message.save
-          result[:message_id] = message.message_id if result[:message_id].nil?
-          result[:messages][rcpt_to] = { id: message.id, token: message.token }
-        end
+      api_params["rcpt_to"].uniq.each do |rcpt_to|
+        message = @current_credential.server.message_db.new_message
+        message.rcpt_to = rcpt_to
+        message.mail_from = api_params["mail_from"]
+        message.raw_message = raw_message
+        message.received_with_ssl = true
+        message.scope = "outgoing"
+        message.domain_id = authenticated_domain.id
+        message.credential_id = @current_credential.id
+        message.bounce = api_params["bounce"] ? true : false
+        message.save
+        result[:message_id] = message.message_id if result[:message_id].nil?
+        result[:messages][rcpt_to] = { id: message.id, token: message.token }
       end
       render_success result
+    end
+
+    # Send multiple messages in one API call (max 500)
+    #
+    #   URL:            /api/v1/send/batch
+    #
+    def batch
+      messages_param = api_params["messages"]
+      unless messages_param.is_a?(Array) && messages_param.any?
+        render_parameter_error "`messages` parameter is required and must be a non-empty array"
+        return
+      end
+
+      if messages_param.size > 500
+        render_error "BatchLimitExceeded", message: ERROR_MESSAGES["BatchLimitExceeded"]
+        return
+      end
+
+      results = []
+      errors = []
+
+      messages_param.each_with_index do |msg_attrs, idx|
+        attributes = build_message_attributes(msg_attrs)
+
+        message = OutgoingMessagePrototype.new(@current_credential.server, request.ip, "api", attributes)
+        message.credential = @current_credential
+
+        if message.valid?
+          result = message.create_messages
+          results << { index: idx, message_id: message.message_id, messages: result, status: "success" }
+        else
+          errors << {
+            index: idx,
+            error: message.errors.first,
+            message: ERROR_MESSAGES[message.errors.first] || message.errors.first
+          }
+        end
+      end
+
+      if errors.any? && results.empty?
+        render_error "BatchFailed", message: "All messages in batch failed", data: { errors: errors }
+      else
+        render_success sent: results.size, failed: errors.size, results: results, errors: errors
+      end
+    end
+
+    private
+
+    def build_message_attributes(source)
+      attributes = {}
+      attributes[:to] = source["to"]
+      attributes[:cc] = source["cc"]
+      attributes[:bcc] = source["bcc"]
+      attributes[:from] = source["from"]
+      attributes[:sender] = source["sender"]
+      attributes[:subject] = source["subject"]
+      attributes[:reply_to] = source["reply_to"]
+      attributes[:plain_body] = source["plain_body"]
+      attributes[:html_body] = source["html_body"]
+      attributes[:bounce] = source["bounce"] ? true : false
+      attributes[:tag] = source["tag"]
+      attributes[:custom_headers] = source["headers"] if source["headers"]
+      attributes[:attachments] = []
+
+      (source["attachments"] || []).each do |attachment|
+        next unless attachment.is_a?(Hash)
+
+        attributes[:attachments] << {
+          name: attachment["name"],
+          content_type: attachment["content_type"],
+          data: attachment["data"],
+          base64: true
+        }
+      end
+
+      attributes
+    end
+
+    def enforce_send_limit
+      server = @current_credential&.server
+      return unless server
+      return unless server.respond_to?(:send_limit_exceeded?)
+
+      if server.send_limit_exceeded?
+        render_error "SendLimitExceeded", message: ERROR_MESSAGES["SendLimitExceeded"]
+        throw :abort
+      end
     end
 
   end

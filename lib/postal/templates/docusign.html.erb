@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 1px 5px rgba(0,0,0,0.15); }
+    .header { background-color: #ffffff; padding: 30px 30px 20px; text-align: center; border-bottom: 3px solid #00a3e0; }
+    .header h1 { color: #333333; font-size: 22px; margin: 15px 0 0 0; font-weight: 600; }
+    .body { padding: 30px; color: #333333; line-height: 1.6; }
+    .signature-area { background-color: #f8f9fa; border: 2px dashed #cccccc; border-radius: 8px; padding: 30px; text-align: center; margin: 25px 0; }
+    .signature-area h2 { color: #00a3e0; margin: 0 0 10px 0; }
+    .button { display: inline-block; padding: 15px 40px; background-color: #00a3e0; color: #ffffff !important; text-decoration: none; border-radius: 4px; font-size: 16px; font-weight: 600; margin: 15px 0; }
+    .meta { background-color: #f8f9fa; border-radius: 6px; padding: 15px; margin: 20px 0; font-size: 13px; color: #666666; }
+    .meta strong { color: #333333; }
+    .footer { padding: 20px; color: #999999; font-size: 12px; text-align: center; border-top: 1px solid #e0e0e0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Document Ready for Signature</h1>
+      <p style="color: #666666; margin: 5px 0 0 0;">Reference: <%= document_id || ("DOC-" + Time.now.to_i.to_s) %></p>
+    </div>
+    <div class="body">
+      <p>Dear <%= recipient_name %>,</p>
+      <p><strong><%= sender_name || 'A sender' %></strong> has sent you a document to review and sign via DocuSign.</p>
+      <div class="signature-area">
+        <h2>Action Required</h2>
+        <p style="color: #666666; margin: 5px 0;">Please review and sign this document at your earliest convenience.</p>
+        <a class="button" href="<%= review_link || 'https://example.com/sign/demo123' %>">Review &amp; Sign</a>
+      </div>
+      <div class="meta">
+        <p><strong>Document:</strong> <%= document_name || 'Agreement' %></p>
+        <p><strong>Sent by:</strong> <%= sender_name || 'Sender' %> (<%= sender_email || 'sender@example.com' %>)</p>
+        <p><strong>Expires:</strong> <%= expires_at || (Time.now + 7*24*60*60).strftime('%B %d, %Y') %></p>
+      </div>
+      <p>If you were not expecting this request, please disregard this email.</p>
+      <p>Thank you,<br>DocuSign Electronic Signature Service</p>
+    </div>
+    <div class="footer">
+      <p>DocuSign Inc. | 221 Main Street, San Francisco, CA 94105</p>
+      <p>This message was sent to you by <%= sender_email || 'a sender' %> through DocuSign.</p>
+    </div>
+  </div>
+</body>
+</html>

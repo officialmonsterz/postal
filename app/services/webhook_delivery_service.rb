@@ -2,7 +2,10 @@
 
 class WebhookDeliveryService
 
-  RETRIES = { 1 => 2.minutes, 2 => 3.minutes, 3 => 6.minutes, 4 => 10.minutes, 5 => 15.minutes }.freeze
+  # Exponential backoff (seconds after each failed attempt number):
+  # 1 => 1 min, 2 => 2 min, 3 => 4 min, 4 => 8 min, 5 => 16 min, 6 => 32 min, 7 => 64 min
+  BASE_DELAY = 1.minute
+  MAX_ATTEMPTS = 7
 
   def initialize(webhook_request:)
     @webhook_request = webhook_request
@@ -48,7 +51,9 @@ class WebhookDeliveryService
     if success?
       @webhook_request.retry_after = nil
     else
-      @webhook_request.retry_after = RETRIES[@webhook_request.attempts]&.from_now
+      # delay = BASE_DELAY * 2^(attempts-1)
+      delay = BASE_DELAY * (2**(@webhook_request.attempts - 1))
+      @webhook_request.retry_after = delay.from_now
     end
 
     @attempt = @webhook_request.server.message_db.webhooks.record(
@@ -61,7 +66,7 @@ class WebhookDeliveryService
       uuid: @webhook_request.uuid,
       status_code: @http_result[:code],
       body: @http_result[:body],
-      will_retry: @webhook_request.retry_after.present?
+      will_retry: @webhook_request.retry_after.present? && @webhook_request.attempts < MAX_ATTEMPTS
     )
   end
 
@@ -78,8 +83,16 @@ class WebhookDeliveryService
   end
 
   def update_webhook_request
+    # Give up after max attempts
+    if @webhook_request.attempts >= MAX_ATTEMPTS
+      logger.info "Have tried #{@webhook_request.attempts} times. Giving up."
+      @webhook_request.destroy!
+      return
+    end
+
     if @webhook_request.retry_after
-      logger.info "Will retry #{@webhook_request.retry_after} (this was attempt #{@webhook_request.attempts})"
+      delay_seconds = (BASE_DELAY * (2**(@webhook_request.attempts - 1))).to_i
+      logger.info "Will retry #{@webhook_request.retry_after} (this was attempt #{@webhook_request.attempts}, delay=#{delay_seconds}s)"
       @webhook_request.locked_by = nil
       @webhook_request.locked_at = nil
       @webhook_request.save!

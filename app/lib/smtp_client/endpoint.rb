@@ -45,13 +45,19 @@ module SMTPClient
       !ipv6?
     end
 
-    # Start a new SMTP session and store the client with this server for future use as needed
+    # Start a new SMTP session and store the client with this server for future use as needed.
+    # Optionally authenticates with PLAIN or LOGIN when credentials are provided
+    # (from relay config or explicit arguments).
     #
     # @param source_ip_address [IPAddress] the IP address to use as the source address for the connection
     # @param allow_ssl [Boolean] whether to allow SSL for this connection, if false SSL mode is ignored
+    # @param auth_username [String, nil] username for SMTP AUTH
+    # @param auth_password [String, nil] password for SMTP AUTH
+    # @param auth_type [String, Symbol] 'plain' or 'login'
     #
     # @return [Net::SMTP]
-    def start_smtp_session(source_ip_address: nil, allow_ssl: true)
+    def start_smtp_session(source_ip_address: nil, allow_ssl: true,
+                           auth_username: nil, auth_password: nil, auth_type: nil)
       @smtp_client = Net::SMTP.new(@ip_address, @server.port)
       @smtp_client.open_timeout = Postal::Config.smtp_client.open_timeout
       @smtp_client.read_timeout = Postal::Config.smtp_client.read_timeout
@@ -60,6 +66,12 @@ module SMTPClient
       if source_ip_address
         @source_ip_address = source_ip_address
       end
+
+      # Remember options so connection-error retries can re-auth
+      @last_session_allow_ssl = allow_ssl
+      @last_auth_username = auth_username.nil? ? @server.try(:auth_username) : auth_username
+      @last_auth_password = auth_password.nil? ? @server.try(:auth_password) : auth_password
+      @last_auth_type = (auth_type || @server.try(:auth_type) || "plain").to_s.downcase
 
       if @source_ip_address
         @smtp_client.source_address = ipv6? ? @source_ip_address.ipv6 : @source_ip_address.ipv4
@@ -82,7 +94,20 @@ module SMTPClient
         @smtp_client.disable_tls
       end
 
-      @smtp_client.start(@source_ip_address ? @source_ip_address.hostname : self.class.default_helo_hostname)
+      # HELO: relay override, then source IP hostname, then global default
+      helo = if @server.respond_to?(:helo_hostname) && @server.helo_hostname.present?
+               @server.helo_hostname
+             elsif @source_ip_address
+               @source_ip_address.hostname
+             else
+               self.class.default_helo_hostname
+             end
+
+      if @last_auth_username.present? && @last_auth_password.present?
+        @smtp_client.start(helo, @last_auth_username, @last_auth_password, @last_auth_type.to_sym)
+      else
+        @smtp_client.start(helo)
+      end
 
       @smtp_client
     end
@@ -105,7 +130,14 @@ module SMTPClient
     rescue Errno::ECONNRESET, Errno::EPIPE, OpenSSL::SSL::SSLError
       if retry_on_connection_error
         finish_smtp_session
-        start_smtp_session
+        # Re-start with same SSL/auth options so authenticated relays keep working
+        start_smtp_session(
+          source_ip_address: @source_ip_address,
+          allow_ssl: @last_session_allow_ssl.nil? ? true : @last_session_allow_ssl,
+          auth_username: @last_auth_username,
+          auth_password: @last_auth_password,
+          auth_type: @last_auth_type
+        )
         return send_message(raw_message, mail_from, rcpt_to, retry_on_connection_error: false)
       end
 

@@ -185,7 +185,13 @@ class SMTPSender < BaseSender
     # Add this endpoint to the list of endpoints that we have attempted to connect to
     @endpoints << endpoint unless @endpoints.include?(endpoint)
 
-    endpoint.start_smtp_session(allow_ssl: allow_ssl, source_ip_address: @source_ip_address)
+    endpoint.start_smtp_session(
+      allow_ssl: allow_ssl,
+      source_ip_address: @source_ip_address,
+      auth_username: endpoint.server.auth_username,
+      auth_password: endpoint.server.auth_password,
+      auth_type: endpoint.server.auth_type
+    )
     logger.info "Connected to #{endpoint}"
     @current_endpoint = endpoint
 
@@ -196,8 +202,10 @@ class SMTPSender < BaseSender
     endpoint.finish_smtp_session
 
     # If we get an SSL error, we can retry a connection without
-    # ssl.
-    if e.is_a?(OpenSSL::SSL::SSLError) && endpoint.server.ssl_mode == "Auto"
+    # ssl. Compare using both constant and string for relay-config compatibility.
+    ssl_mode = endpoint.server.ssl_mode
+    auto_mode = (ssl_mode == SSLModes::AUTO || ssl_mode.to_s == "Auto")
+    if e.is_a?(OpenSSL::SSL::SSLError) && auto_mode
       logger.error "SSL error (#{e.message}), retrying without SSL"
       return connect_to_endpoint(endpoint, allow_ssl: false)
     end
@@ -245,9 +253,28 @@ class SMTPSender < BaseSender
       return nil if relays.nil?
 
       relays = relays.filter_map do |relay|
-        next unless relay.host.present?
+        next unless relay[:host].present? || relay.host.present?
 
-        SMTPClient::Server.new(relay.host, port: relay.port, ssl_mode: relay.ssl_mode)
+        # Config transform returns a Hash with string/symbol keys depending on Konfig version.
+        host = relay.respond_to?(:host) ? relay.host : relay[:host]
+        port = relay.respond_to?(:port) ? relay.port : relay[:port]
+        ssl_mode = relay.respond_to?(:ssl_mode) ? relay.ssl_mode : relay[:ssl_mode]
+        auth_username = relay.respond_to?(:auth_username) ? relay.auth_username : relay[:auth_username]
+        auth_password = relay.respond_to?(:auth_password) ? relay.auth_password : relay[:auth_password]
+        auth_type = relay.respond_to?(:auth_type) ? relay.auth_type : relay[:auth_type]
+        helo_hostname = relay.respond_to?(:helo_hostname) ? relay.helo_hostname : relay[:helo_hostname]
+
+        next if host.blank?
+
+        SMTPClient::Server.new(
+          host,
+          port: port || 25,
+          ssl_mode: ssl_mode || SSLModes::AUTO,
+          auth_username: auth_username,
+          auth_password: auth_password,
+          auth_type: auth_type.presence || "plain",
+          helo_hostname: helo_hostname
+        )
       end
 
       @smtp_relays = relays.empty? ? nil : relays

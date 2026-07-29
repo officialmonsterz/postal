@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""
+postal-send - Bulk email sender for Postal API
+Reads recipient data from CSV/JSON and sends via Postal HTTP API.
+
+Usage:
+  postal-send --host postal.officialmonsterz.com --key YOUR_API_KEY \
+      --csv recipients.csv --from sender@officialmonsterz.com \
+      --subject "Your Subject" --plain-body "Hello"
+
+  postal-send --host postal.officialmonsterz.com --key YOUR_API_KEY \
+      --json messages.json
+
+  postal-send --host postal.officialmonsterz.com --key YOUR_API_KEY \
+      --to user@example.com --from sender@officialmonsterz.com \
+      --subject "Test" --plain-body "Hello world"
+"""
+
+import argparse
+import csv
+import json
+import sys
+import time
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
+VERSION = "1.0.0"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Postal bulk email sender CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("--host", required=True, help="Postal server hostname")
+    parser.add_argument("--key", required=True, help="Postal Server API key")
+    parser.add_argument("--protocol", default="https", choices=["http", "https"])
+    parser.add_argument("--timeout", type=int, default=30)
+
+    input_group = parser.add_mutually_exclusive_group()
+    input_group.add_argument("--csv", help="CSV file with recipient data")
+    input_group.add_argument("--json", help="JSON file with messages array")
+    input_group.add_argument("--to", help="Single recipient email")
+
+    parser.add_argument("--from", dest="from_addr", help="Sender email address")
+    parser.add_argument("--sender", help="Sender header address")
+    parser.add_argument("--subject", help="Email subject line")
+    parser.add_argument("--plain-body", help="Plain text body")
+    parser.add_argument("--html-body", help="HTML body (inline)")
+    parser.add_argument("--tag", help="Message tag for tracking")
+
+    parser.add_argument("--csv-delimiter", default=",")
+    parser.add_argument("--map-to", default="email")
+    parser.add_argument("--map-subject", default="subject")
+    parser.add_argument("--map-from", default="from")
+
+    parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--rate-limit", type=int, default=30)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--verbose", "-v", action="store_true")
+    return parser.parse_args()
+
+
+class PostalSender:
+    def __init__(self, host, api_key, protocol="https", timeout=30):
+        self.base_url = f"{protocol}://{host}/api/v1"
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def _request(self, endpoint, data):
+        url = f"{self.base_url}/{endpoint}"
+        headers = {
+            "X-Server-API-Key": self.api_key,
+            "Content-Type": "application/json",
+            "User-Agent": f"postal-send/{VERSION}",
+        }
+        body = json.dumps(data).encode("utf-8")
+        req = Request(url, data=body, headers=headers, method="POST")
+        try:
+            resp = urlopen(req, timeout=self.timeout)
+            return json.loads(resp.read().decode("utf-8"))
+        except HTTPError as e:
+            try:
+                return json.loads(e.read().decode("utf-8"))
+            except Exception:
+                return {"status": "error", "data": {"code": "HTTPError", "message": str(e)}}
+        except URLError as e:
+            return {"status": "error", "data": {"code": "ConnectionError", "message": str(e.reason)}}
+
+    def send_message(self, msg_data):
+        return self._request("send/message", msg_data)
+
+    def send_batch(self, messages):
+        return self._request("send/batch", {"messages": messages})
+
+
+def build_message(args, row=None):
+    msg = {}
+    if row and args.map_to in row and row[args.map_to].strip():
+        msg["to"] = [row[args.map_to].strip()]
+    elif args.to:
+        msg["to"] = [args.to]
+    else:
+        return None
+
+    from_addr = None
+    if row and args.map_from in row and row[args.map_from].strip():
+        from_addr = row[args.map_from].strip()
+    if not from_addr:
+        from_addr = args.from_addr
+    if from_addr:
+        msg["from"] = from_addr
+
+    subject = None
+    if row and args.map_subject in row and row[args.map_subject].strip():
+        subject = row[args.map_subject].strip()
+    if not subject:
+        subject = args.subject
+    if subject:
+        msg["subject"] = subject
+
+    if args.sender:
+        msg["sender"] = args.sender
+    if args.plain_body:
+        msg["plain_body"] = args.plain_body
+    if args.html_body:
+        msg["html_body"] = args.html_body
+    if args.tag:
+        msg["tag"] = args.tag
+    return msg
+
+
+def read_csv_messages(args):
+    messages = []
+    with open(args.csv, "r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f, delimiter=args.csv_delimiter)
+        fieldnames = None
+        for row in reader:
+            if fieldnames is None:
+                fieldnames = reader.fieldnames
+            msg = build_message(args, row)
+            if msg:
+                messages.append(msg)
+    if args.verbose:
+        print(f"[*] Read {len(messages)} rows from {args.csv}")
+        print(f"[*] Column headers: {fieldnames}")
+    return messages
+
+
+def read_json_messages(args):
+    with open(args.json, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and "messages" in data:
+        return data["messages"]
+    print("[-] JSON must be an array or {'messages': [...]}")
+    sys.exit(1)
+
+
+def main():
+    args = parse_args()
+    if args.batch_size > 500:
+        print("[-] --batch-size max is 500")
+        sys.exit(1)
+
+    if args.csv:
+        messages = read_csv_messages(args)
+    elif args.json:
+        messages = read_json_messages(args)
+    elif args.to:
+        msg = build_message(args)
+        messages = [msg] if msg else []
+    else:
+        print("[-] Use --csv, --json, or --to")
+        sys.exit(1)
+
+    if not messages:
+        print("[-] No messages to send.")
+        sys.exit(0)
+
+    print(f"[+] Loaded {len(messages)} message(s)")
+    if args.dry_run:
+        print("[*] DRY RUN - First message preview:")
+        print(json.dumps(messages[0], indent=2))
+        return
+
+    sender = PostalSender(args.host, args.key, args.protocol, args.timeout)
+    min_interval = 60.0 / max(args.rate_limit, 1)
+    last_request = 0.0
+    sent_count = 0
+    fail_count = 0
+
+    for i in range(0, len(messages), args.batch_size):
+        batch = messages[i : i + args.batch_size]
+        elapsed = time.time() - last_request
+        if elapsed < min_interval:
+            time.sleep(min_interval - elapsed)
+
+        if args.batch_size > 1 and len(batch) > 1:
+            if args.verbose:
+                print(f"[*] Sending batch {i // args.batch_size + 1}: {len(batch)} messages...")
+            result = sender.send_batch(batch)
+            last_request = time.time()
+            if result.get("status") == "success":
+                data = result.get("data", {})
+                sent_count += int(data.get("sent", 0))
+                fail_count += int(data.get("failed", 0))
+                if args.verbose:
+                    print(f"    -> Sent: {data.get('sent')}, Failed: {data.get('failed')}")
+            else:
+                err = result.get("data", {}).get("message", "Unknown error")
+                print(f"[-] Batch failed: {err}")
+                fail_count += len(batch)
+        else:
+            for msg in batch:
+                if args.verbose:
+                    print(f"[*] Sending to {msg.get('to', ['?'])[0]}...")
+                result = sender.send_message(msg)
+                last_request = time.time()
+                if result.get("status") == "success":
+                    sent_count += 1
+                    if args.verbose:
+                        mid = result.get("data", {}).get("message_id", "?")
+                        print(f"    -> OK: {mid}")
+                else:
+                    fail_count += 1
+                    err = result.get("data", {}).get("message", "Unknown")
+                    print(f"    -> FAIL: {err}")
+
+    print(f"\n[+] Complete: {sent_count} sent, {fail_count} failed, {len(messages)} total")
+    if fail_count:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

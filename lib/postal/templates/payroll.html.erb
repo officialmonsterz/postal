@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #e8eaed; margin: 0; padding: 20px; }
+    .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+    .header { background: linear-gradient(135deg, #2d7d46, #1e5f35); color: #ffffff; padding: 25px; border-radius: 8px 8px 0 0; text-align: center; }
+    .header h1 { margin: 0; font-size: 22px; font-weight: 300; }
+    .header p { margin: 5px 0 0; opacity: 0.9; font-size: 14px; }
+    .body { padding: 30px; color: #333333; line-height: 1.6; }
+    .amount-box { background-color: #e8f5e9; border: 1px solid #c8e6c9; border-radius: 8px; padding: 20px; text-align: center; margin: 20px 0; }
+    .amount-box .label { color: #2d7d46; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; margin: 0; }
+    .amount-box .amount { font-size: 36px; font-weight: bold; color: #1e5f35; margin: 10px 0; }
+    .amount-box .period { color: #666666; font-size: 13px; margin: 0; }
+    .button { display: inline-block; padding: 14px 36px; background-color: #2d7d46; color: #ffffff !important; text-decoration: none; border-radius: 4px; font-size: 15px; margin: 15px 0; }
+    .details-table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px; }
+    .details-table td { padding: 10px 12px; border-bottom: 1px solid #e0e0e0; }
+    .details-table td:last-child { text-align: right; font-weight: 600; }
+    .footer { padding: 20px; color: #999999; font-size: 12px; text-align: center; border-top: 1px solid #e0e0e0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Payroll Notification</h1>
+      <p>Pay Period: <%= pay_period || Time.now.strftime('%B %Y') %></p>
+    </div>
+    <div class="body">
+      <p>Dear <%= recipient_name %>,</p>
+      <p>Your payroll statement for the period ending <strong><%= pay_period || Time.now.strftime('%B %d, %Y') %></strong> is now available.</p>
+      <div class="amount-box">
+        <p class="label">Net Pay Amount</p>
+        <p class="amount"><%= currency_symbol || '$' %><%= net_pay || '2,450.00' %></p>
+        <p class="period"><%= pay_date || Time.now.strftime('%B %d, %Y') %></p>
+      </div>
+      <table class="details-table">
+        <tr><td>Gross Pay</td><td><%= currency_symbol || '$' %><%= gross_pay || '3,200.00' %></td></tr>
+        <tr><td>Taxes Withheld</td><td>-<%= currency_symbol || '$' %><%= taxes || '650.00' %></td></tr>
+        <tr><td>Deductions</td><td>-<%= currency_symbol || '$' %><%= deductions || '100.00' %></td></tr>
+        <tr><td style="border-bottom: none;"><strong>Net Pay</strong></td><td style="border-bottom: none;"><strong><%= currency_symbol || '$' %><%= net_pay || '2,450.00' %></strong></td></tr>
+      </table>
+      <p style="text-align: center;">
+        <a class="button" href="<%= statement_link || 'https://example.com/payroll/statement' %>">View Full Statement</a>
+      </p>
+      <p>If you have any questions regarding your pay, please contact HR.</p>
+      <p>Thank you,<br>Payroll Department</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated payroll notification. Please do not reply to this email.</p>
+      <p>&copy; <%= Time.now.year %> <%= company_name || 'Your Company' %>. Confidential.</p>
+    </div>
+  </div>
+</body>
+</html>
